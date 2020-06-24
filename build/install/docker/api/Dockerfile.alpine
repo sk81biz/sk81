@@ -1,0 +1,88 @@
+#FROM alpine:3.11
+FROM mcr.microsoft.com/dotnet/core/sdk:3.1-alpine AS runtime
+
+ARG GLIBC_VER="2.30-r0"
+ARG APPS_UID="104"
+ARG APPS_GID="107"
+
+LABEL onlyoffice.community.release-date="${RELEASE_DATE}" \
+      onlyoffice.community.version="${VERSION}" \
+      maintainer="Ascensio System SIA <support@onlyoffice.com>"
+
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true
+
+#RUN set -x ; \
+#    addgroup -g ${APPS_GID} -S onlyoffice ; \
+#    adduser -u ${APPS_UID} -D -S -G onlyoffice onlyoffice && exit 0 ; exit 1
+
+
+RUN apk update && apk upgrade && \
+    apk add --no-cache  bash \
+                        curl \
+                        mysql-client \
+                        npm \
+                        jq \
+                        nodejs \
+                        rsyslog \
+                        supervisor \
+                        vim \
+                        wget \
+                        yarn \
+                        #                        gcompat \
+                        #                        libc6-compat \
+                        libstdc++ \
+                        libintl \
+                        icu \
+                        icu-libs \
+                        protobuf
+
+COPY . /app/onlyoffice/src
+
+RUN ALPINE_GLIBC_REPO="https://github.com/sgerrand/alpine-pkg-glibc/releases/download" && \
+    curl -Ls https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub -o /etc/apk/keys/sgerrand.rsa.pub && \
+    curl -Ls ${ALPINE_GLIBC_REPO}/${GLIBC_VER}/glibc-${GLIBC_VER}.apk > /tmp/${GLIBC_VER}.apk && \
+    apk add /tmp/${GLIBC_VER}.apk && \
+    curl -Ls ${ALPINE_GLIBC_REPO}/${GLIBC_VER}/glibc-bin-${GLIBC_VER}.apk > /tmp/${GLIBC_VER}-bin.apk && \
+    apk add /tmp/${GLIBC_VER}-bin.apk && \
+    rm -rf /tmp/*.apk /var/cache/apk/* && \
+    sed -i s/lib64/lib/ /usr/glibc-compat/bin/ldd
+
+RUN cd /app/onlyoffice/src/ && \
+    yarn install --cwd web/ASC.Web.Components --frozen-lockfile > build/ASC.Web.Components.log && \
+    npm run build --prefix web/ASC.Web.Components && \
+    yarn pack --cwd web/ASC.Web.Components && \
+    component=$(ls web/ASC.Web.Components/asc-web-components-v1.*.tgz) && \
+	yarn remove asc-web-components --cwd web/ASC.Web.Common --peer && \
+    yarn add file:../../$component --cwd web/ASC.Web.Common --cache-folder ../../yarn --peer && \
+    yarn install --cwd web/ASC.Web.Common --frozen-lockfile > build/ASC.Web.Common.log && \
+    npm run build --prefix web/ASC.Web.Common && \
+    yarn pack --cwd web/ASC.Web.Common && \
+    yarn cache clean && \
+    # build dotnet applications \
+    cd /app/onlyoffice/src/ && \
+    cd products/ASC.People/Server && \
+    dotnet -d publish -o /var/www/products/ASC.People/server && \
+    cd ../../../ && \
+    cd web/ASC.Web.Api && \
+    dotnet -d publish -o /var/www/studio/api && \
+    cd ../../ && \
+    cd web/ASC.Web.Studio && \
+    dotnet -d publish -o /var/www/studio/server && \
+    cd ../../ && \
+    cd common/services/ASC.Notify && \
+    dotnet -d publish -o /var/www/services/notify && \
+    cd ../../../ && \
+    cd common/services/ASC.Studio.Notify && \
+    dotnet -d publish -o /var/www/services/studio.notify && \
+    dotnet nuget locals all --clear && \
+    # prepare config file  \
+    cd /app/onlyoffice/src/ && \
+    mkdir -p /app/onlyoffice/config/ && cp -rf config/* /app/onlyoffice/config/ && \
+    cp build/install/docker/api/docker-entrypoint.sh / && \
+    mkdir -p /etc/supervisor.d && \
+    cp build/install/docker/api/supervisord.conf /etc/supervisor.d/supervisord.ini && \
+    rm -rf /app/onlyoffice/src
+
+EXPOSE 5000
+
+ENTRYPOINT ["bash", "-c", "/docker-entrypoint.sh"]

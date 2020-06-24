@@ -1,0 +1,338 @@
+version: '3.4'
+
+services:
+
+  zookeeper:
+    image: zookeeper:3.4.9    # https://hub.docker.com/_/zookeeper
+    container_name: zookeeper
+    hostname: zookeeper
+    restart: always
+    ports:
+    - "2181:2181"
+    networks:
+    - onlyoffice
+    environment:
+      ZOO_MY_ID: ${ZOO_MY_ID}
+      ZOO_PORT: ${ZOO_PORT}
+      ZOO_SERVER: ${ZOO_SERVER}
+
+    volumes:
+    - zoo_data:/data
+    - zoo_log:/datalog
+
+  kafka:
+    image: confluentinc/cp-kafka:5.3.1   # https://hub.docker.com/r/confluentinc/cp-kafka/
+    container_name: kafka
+    hostname: kafka
+    depends_on:
+    - zookeeper
+    ports:
+    - "9092:9092"
+    networks:
+    - onlyoffice
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
+      KAFKA_INTER_BROKER_LISTENER_NAME: ${KAFKA_INTER_BROKER_LISTENER_NAME}
+      KAFKA_ZOOKEEPER_CONNECT: ${KAFKA_ZOOKEEPER_CONNECT}
+      KAFKA_BROKER_ID: ${KAFKA_BROKER_ID}
+      KAFKA_LOG4J_LOGGERS: ${KAFKA_LOG4J_LOGGERS}
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
+    volumes:
+    - kafka_data:/var/lib/kafka/data
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.5.0    # https://hub.docker.com/_/elasticsearch
+    container_name: elasticsearch
+    hostname: elasticsearch
+    networks:
+    - onlyoffice
+    environment:
+    - discovery.type=single-node
+    - bootstrap.memory_lock=true
+    - "ES_JAVA_OPTS=-Xms512m -Xmx512m -Xss1m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65535
+        hard: 65535
+    volumes:
+    - es_data:/usr/share/elasticsearch/data
+    ports:
+    - 9200:9200
+
+  mysql:
+    image: mysql:8.0.18       # https://hub.docker.com/_/mysql
+    container_name: mysql
+    hostname: mysql
+    restart: always
+    expose:
+    - "3306"
+    networks:
+    - onlyoffice
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+    - ./config/mysql/conf.d:/etc/mysql/conf.d
+    - ../../../sql:/docker-entrypoint-initdb.d
+    - mysql_data:/var/lib/mysql
+    - mysql_log:/var/log/mysql
+
+  api:
+    build:
+      context: ./../../../
+      # dockerfile: build/install/docker/api/Dockerfile
+      dockerfile: build/install/docker/api/Dockerfile.alpine3.1
+    image: api
+    container_name: api
+    hostname: api
+    restart: always
+    depends_on:
+    - mysql
+    - kafka
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      KAFKA_HOST: ${KAFKA_HOST}
+    expose:
+    - "5000"
+    networks:
+    - onlyoffice
+    volumes:
+    - app_data:/app/onlyoffice/data/
+    - app_log:/var/log/supervisor/
+
+  storybook:
+    build:
+      context: ./../../../
+      dockerfile: build/install/docker/storybook/Dockerfile
+    image: storybook
+    container_name: storybook
+    hostname: storybook
+    restart: always
+    depends_on:
+    - mysql
+    - kafka
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      KAFKA_HOST: ${KAFKA_HOST}
+    expose:
+    - "8081"
+    - "8082"
+    networks:
+    - onlyoffice
+    volumes:
+    - app_data:/app/onlyoffice/data/
+    - app_log:/var/log/supervisor/
+
+  studio.notify:
+    build:
+      context: ./../../../
+      dockerfile: build/install/docker/studio.notify/Dockerfile
+    image: studio.notify
+    container_name: studio.notify
+    hostname: studio_notify
+    restart: always
+    depends_on:
+    - mysql
+    - kafka
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      KAFKA_HOST: ${KAFKA_HOST}
+    expose:
+    - "5006"
+    networks:
+    - onlyoffice
+    volumes:
+    - app_data:/app/onlyoffice/data/
+    - app_log:/var/log/supervisor/
+
+  client:
+    build:
+      context: ./../../../
+      dockerfile: build/install/docker/client/Dockerfile
+    image: client
+    container_name: client
+    hostname: client
+    restart: always
+    depends_on:
+    - mysql
+    - kafka
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      KAFKA_HOST: ${KAFKA_HOST}
+    expose:
+    - "5001"
+    networks:
+    - onlyoffice
+    volumes:
+    - app_data:/app/onlyoffice/data/
+    - app_log:/var/log/supervisor/
+
+  studio:
+    build:
+      context: ./../../../
+      dockerfile: build/install/docker/studio/Dockerfile
+    image: studio
+    container_name: studio
+    hostname: studio
+    restart: always
+    depends_on:
+    - mysql
+    - kafka
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      KAFKA_HOST: ${KAFKA_HOST}
+    expose:
+    - "5003"
+    networks:
+    - onlyoffice
+    volumes:
+    - app_data:/app/onlyoffice/data/
+    - app_log:/var/log/supervisor/
+
+  notify:
+    build:
+      context: ./../../../
+      dockerfile: build/install/docker/notify/Dockerfile
+    image: notify
+    container_name: notify
+    hostname: notify
+    restart: always
+    depends_on:
+    - mysql
+    - kafka
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      KAFKA_HOST: ${KAFKA_HOST}
+    expose:
+    - "5005"
+    networks:
+    - onlyoffice
+    volumes:
+    - app_data:/app/onlyoffice/data/
+    - app_log:/var/log/supervisor/
+
+  people.server:
+    build:
+      context: ./../../../
+      dockerfile: build/install/docker/people.server/Dockerfile
+    image: people.server
+    container_name: people.server
+    hostname: people_server
+    restart: always
+    depends_on:
+    - mysql
+    - kafka
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      KAFKA_HOST: ${KAFKA_HOST}
+    expose:
+    - "5004"
+    networks:
+    - onlyoffice
+    volumes:
+    - app_data:/app/onlyoffice/data/
+    - app_log:/var/log/supervisor/
+
+  people.client:
+    build:
+      context: ./../../../
+      dockerfile: build/install/docker/people.client/Dockerfile
+    image: people.client
+    container_name: people.client
+    hostname: people_client
+    restart: always
+    depends_on:
+    - mysql
+    - kafka
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      KAFKA_HOST: ${KAFKA_HOST}
+    expose:
+    - "5002"
+    networks:
+    - onlyoffice
+    volumes:
+    - app_data:/app/onlyoffice/data/
+    - app_log:/var/log/supervisor/
+
+  nginx:
+    build:
+      context: ./../../../
+      dockerfile: build/install/docker/frontnginx/Dockerfile
+    image: frontnginx
+    container_name: frontnginx
+    hostname: frontnginx
+    restart: always
+    expose:
+        #    - "80"
+        #    - "443"
+    - "8092"
+    networks:
+    - onlyoffice
+    depends_on:
+    - mysql
+    - kafka
+    - api
+    - client
+    - notify
+    - people.client
+    - people.server
+    - storybook
+    - studio
+    - studio.notify
+    environment:
+      API_HOSTS: ${API_HOSTS}
+      CLIENT_HOSTS: ${CLIENT_HOSTS}
+      NOTIFY_HOSTS: ${NOTIFY_HOSTS}
+      PEOPLECLIENT_HOSTS: ${PEOPLECLIENT_HOSTS}
+      PEOPLESERVER_HOSTS: ${PEOPLESERVER_HOSTS}
+      STORYBOOK_HOSTS: ${STORYBOOK_HOSTS}
+      STUDIO_HOSTS: ${STUDIO_HOSTS}
+      STUDIONOTIFY_HOSTS: ${STUDIONOTIFY_HOSTS}
+    volumes:
+    - nginx_log:/var/log/nginx
+
+networks:
+  onlyoffice:
+    driver: 'bridge'
+
+volumes:
+  mysql_data:
+  mysql_log:
+  nginx_log:
+  es_data:
+  zoo_data:
+  zoo_log:
+  kafka_data:
+  app_data:
+  app_log:
